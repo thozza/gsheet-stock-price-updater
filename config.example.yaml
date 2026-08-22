@@ -1,0 +1,53 @@
+# Example configuration for gsheet-stock-price-updater.
+#
+# Copy this to config.yaml (gitignored) and adjust. Every column mapping accepts
+# either a header name (matched against the header row) or a column letter.
+
+# Spreadsheet URL or bare ID.
+spreadsheet: "https://docs.google.com/spreadsheets/d/YOUR_SPREADSHEET_ID/edit"
+
+# Worksheet (tab) name.
+worksheet: "Portfolio"
+
+# 1-based row that holds the column headers.
+header_row: 1
+
+# 1-based first row of instrument data. Must be greater than header_row.
+first_data_row: 2
+
+# Optional: 1-based last data row. Omit to read every row below the header.
+# last_data_row: 100
+
+# Which columns hold what. Use header names (as below) or letters like "C".
+columns:
+  identifier: "Symbol"        # provider identifier / symbol / URL slug
+  provider: "Provider"        # one of: pse, scrape, investing-com
+  url: "Source URL"           # optional; used by pse and scrape providers
+  price_out: "Price"          # price is written here
+  currency_out: "Currency"    # ISO 4217 currency code is written here
+  updated_at: "Updated At"    # optional; receives a per-run timestamp
+
+# Polite pacing and resilience for external calls.
+request_delay_seconds: 0.5
+max_retries: 2
+
+# Per-provider settings. All fields have defaults; override only what you need.
+providers:
+  pse:
+    # Default XPath for the price on a PSE detail page. Overridable per row via
+    # a dedicated column is not required; adjust here if the page changes.
+    default_xpath: "//*[contains(@class, 'text-4xl')][1]/text()"
+    timeout_seconds: 15.0
+  scrape:
+    timeout_seconds: 15.0
+  investing_com:
+    # Defaults target Investing.com's instrument detail page layout; adjust
+    # here if the page changes.
+    identifier_xpath: "//div[@data-test='instrument-price-last']"
+    currency_xpath: "//div[@data-test='currency-in-label']/span"
+    timeout_seconds: 15.0
+
+# Authentication. Only the NAME of the env var is stored here; the var points at
+# the service-account JSON key file at runtime. The key is never inlined.
+auth:
+  credentials_env: "GOOGLE_APPLICATION_CREDENTIALS"

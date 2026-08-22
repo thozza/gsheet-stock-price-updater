@@ -1,0 +1,16 @@
+# gitleaks configuration. Builds on the bundled default ruleset and adds a
+# narrow allowlist for this repo's example/placeholder files, which contain no
+# real secrets. See https://github.com/gitleaks/gitleaks.
+
+title = "gsheet-stock-price-updater gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Placeholder example files and test fixtures - no real secrets."
+paths = [
+  '''(^|/)config\.example\.yaml$''',
+  '''(^|/)\.env\.example$''',
+  '''(^|/)tests/fixtures/''',
+]
