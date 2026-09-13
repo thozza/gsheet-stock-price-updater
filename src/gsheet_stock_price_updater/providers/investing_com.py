@@ -6,11 +6,11 @@ currency via XPaths (defaults in config, since the page structure can shift).
 
 from __future__ import annotations
 
-import httpx
+from curl_cffi import requests as curl_requests
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..money import MoneyParseError, normalize_currency, parse_decimal
-from . import DEFAULT_USER_AGENT, ProviderError, Quote, RowContext, request_text
+from . import ProviderError, Quote, RowContext, request_text_impersonated
 from ._html import extract_text
 
 DEFAULT_INVESTING_COM_XPATH = "//div[@data-test='instrument-price-last']"
@@ -30,7 +30,10 @@ class InvestingComProviderConfig(BaseModel):
         min_length=1,
         description="XPath to the currency on an Investing.com detail page.",
     )
-    user_agent: str = Field(default=DEFAULT_USER_AGENT, min_length=1)
+    # Investing.com sits behind Cloudflare, which 403s non-browser TLS
+    # fingerprints. curl_cffi impersonates a real browser; this selects which one
+    # (see curl_cffi's supported targets, e.g. "chrome", "chrome124", "safari").
+    impersonate: str = Field(default="chrome", min_length=1)
     timeout_seconds: float = Field(default=15.0, gt=0)
 
 
@@ -38,21 +41,26 @@ class InvestingComProvider:
     name = "investing-com"
 
     def __init__(
-        self, config: InvestingComProviderConfig, client: httpx.Client, max_retries: int
+        self,
+        config: InvestingComProviderConfig,
+        session: curl_requests.Session,
+        max_retries: int,
     ) -> None:
         self._config = config
-        self._client = client
+        self._session = session
         self._max_retries = max_retries
 
     def fetch(self, row: RowContext) -> Quote:
         if not row.url:
             raise ProviderError("investing-com: missing source URL for the row.")
 
-        headers = {"User-Agent": self._config.user_agent}
-        html_text = request_text(
-            self._client,
+        # No custom headers: the impersonated session already sends a complete,
+        # internally consistent browser header set. Overriding them would risk a
+        # mismatch with the impersonated TLS fingerprint.
+        html_text = request_text_impersonated(
+            self._session,
             row.url,
-            headers=headers,
+            headers={},
             timeout=self._config.timeout_seconds,
             max_retries=self._max_retries,
         )

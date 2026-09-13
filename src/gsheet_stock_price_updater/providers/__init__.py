@@ -15,6 +15,8 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Protocol
 
 import httpx
+from curl_cffi import requests as curl_requests
+from curl_cffi.requests.exceptions import RequestException as CurlRequestError
 
 if TYPE_CHECKING:
     from ..config import Config
@@ -122,8 +124,57 @@ def request_text(
     return response.text
 
 
-def build_registry(config: Config, client: httpx.Client) -> dict[str, Provider]:
-    """Construct every provider, wired to the shared HTTP client and config."""
+def request_text_impersonated(
+    session: curl_requests.Session,
+    url: str,
+    *,
+    headers: dict[str, str],
+    timeout: float,
+    max_retries: int,
+    backoff_base: float = 0.5,
+) -> str:
+    """GET `url` via a browser-impersonating curl_cffi session, returning text.
+
+    Mirrors `request_response`'s retry policy (transient statuses and network
+    errors, exponential backoff), but uses curl_cffi so the TLS/HTTP fingerprint
+    matches a real browser. Some sources (e.g. investing.com behind Cloudflare)
+    return 403 to non-browser clients like httpx regardless of headers, so plain
+    `request_text` is not enough for them.
+    """
+
+    last_error: str | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            response = session.get(
+                url, headers=headers, timeout=timeout, allow_redirects=True
+            )
+        except CurlRequestError as exc:
+            last_error = f"network error: {exc!r}"
+        else:
+            if response.status_code == 200:
+                return response.text
+            last_error = f"HTTP {response.status_code}"
+            if response.status_code not in RETRYABLE_STATUS:
+                raise ProviderError(f"GET {url} failed: {last_error}")
+
+        if attempt < max_retries:
+            time.sleep(min(backoff_base * (2**attempt), BACKOFF_CAP_SECONDS))
+
+    raise ProviderError(
+        f"GET {url} failed after {max_retries + 1} attempt(s): {last_error}"
+    )
+
+
+def build_registry(
+    config: Config,
+    client: httpx.Client,
+    impersonate_session: curl_requests.Session,
+) -> dict[str, Provider]:
+    """Construct every provider.
+
+    pse and scrape share the plain httpx `client`; investing.com uses the
+    browser-impersonating curl_cffi `impersonate_session` to get past Cloudflare.
+    """
 
     # Imported here to avoid a circular import at module load time.
     from .investing_com import InvestingComProvider
@@ -133,5 +184,7 @@ def build_registry(config: Config, client: httpx.Client) -> dict[str, Provider]:
     return {
         PseProvider.name: PseProvider(config.providers.pse, client, config.max_retries),
         ScrapeProvider.name: ScrapeProvider(config.providers.scrape, client, config.max_retries),
-        InvestingComProvider.name: InvestingComProvider(config.providers.investing_com, client, config.max_retries),
+        InvestingComProvider.name: InvestingComProvider(
+            config.providers.investing_com, impersonate_session, config.max_retries
+        ),
     }

@@ -45,7 +45,7 @@ row is treated as a per-row failure and skipped.
 
 | Provider | Use for | Row inputs | Notes |
 | --- | --- | --- | --- |
-| `investing-com` | Investing.com instrument detail pages | `url` = detail page URL | Extracts price and currency via configurable XPaths (`providers.investing_com.identifier_xpath` / `currency_xpath`). The row fails if either XPath doesn't resolve to a recognizable value. |
+| `investing-com` | Investing.com instrument detail pages | `url` = detail page URL | Extracts price and currency via configurable XPaths (`providers.investing_com.identifier_xpath` / `currency_xpath`). The row fails if either XPath doesn't resolve to a recognizable value. Investing.com sits behind Cloudflare, which 403s non-browser clients, so this provider fetches with `curl_cffi` browser impersonation; `providers.investing_com.impersonate` selects the target (default `chrome`). |
 | `pse` | Prague Stock Exchange instruments | `url` = detail page URL | Extracts the price via a configurable XPath (`providers.pse.default_xpath`). Currency defaults to CZK. |
 | `scrape` | Anything else, without new code | `identifier` = price XPath, `url` = page URL | Optional `providers.scrape.currency_xpath`; otherwise the currency is detected from the price text, and the row fails if none is found. |
 
@@ -191,7 +191,15 @@ Container Manager keeps a container "running"; for a one-shot batch, use the
 3. Run a script that starts the container for a single run, e.g.:
 
    ```bash
-   docker start -a gsheet-stock-price-updater
+   #!/bin/bash
+   exec > /volume2/docker/gsheet-stock-price-updater/run.log 2>&1
+   echo "=== $(date '+%F %T') run start ==="
+   /usr/local/bin/docker run --rm \
+     -v /volume2/docker/gsheet-stock-price-updater/config.yaml:/config/config.yaml:ro \
+     -v /volume2/docker/gsheet-stock-price-updater/service-account.json:/run/secrets/service-account.json:ro \
+     localhost/gsheet-stock-price-updater:latest
+   echo "=== $(date '+%F %T') run exit=$? ==="
+
    ```
 
    (DSM ships the `docker` CLI even when using Container Manager.) The container
@@ -207,7 +215,7 @@ the HTML/JSON parsing path):
 
 1. Bump the pins: `uv lock --upgrade` for dependencies, and refresh the base
    image digests in `Containerfile` (for example
-   `skopeo inspect --format '{{.Digest}}' docker://python:3.12-slim`).
+   `skopeo inspect --format '{{.Digest}}' docker://python:3.14-slim`).
 2. Rebuild locally, re-run the tests, and re-import into DSM.
 
 "Never rebuild" is discouraged: it freezes CVEs forever. If you enable the
@@ -249,7 +257,7 @@ review and merge manually; nothing runs against your machine automatically.
 
 ## Development
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.14+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync --all-groups        # create the venv with dev tools

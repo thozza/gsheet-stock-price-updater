@@ -34,11 +34,16 @@ check: lint typecheck test
 run *args:
     uv run gsheet-stock-price-updater {{args}}
 
-# Bump dependency lock and print the current base image digests to refresh
-# in the Containerfile (see README "Rebuild and update policy").
+# Bump the dependency lock and print the base image's current digest to pin.
 upgrade-pins:
+    #!/usr/bin/env bash
+    set -euo pipefail
     uv lock --upgrade
-    skopeo inspect --format '{{ "{{" }}.Digest{{ "}}" }}' docker://python:3.12-slim
+    # Read the base image ref (name:tag, minus any pinned digest) from the
+    # Containerfile so this recipe tracks whatever FROM currently uses.
+    image=$(grep -m1 '^FROM ' Containerfile | sed -E 's/^FROM +([^@ ]+).*/\1/')
+    echo "Base image: ${image}"
+    skopeo inspect --format '{{ "{{" }}.Digest{{ "}}" }}' "docker://${image}"
 
 # Build the container image locally (podman; docker also works).
 image-build:

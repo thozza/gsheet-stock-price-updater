@@ -1,6 +1,7 @@
-"""Tests for the pse and scrape providers against recorded fixtures.
+"""Tests for the pse, scrape, and investing.com providers against fixtures.
 
-No live network: every request is served by an httpx.MockTransport handler.
+No live network: httpx-backed providers are served by an httpx.MockTransport
+handler; the curl_cffi-backed investing.com provider by a fake session.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from gsheet_stock_price_updater.providers.scrape import ScrapeProvider, ScrapePr
 from .conftest import load_fixture
 
 ClientFactory = Callable[[Callable[[httpx.Request], httpx.Response]], httpx.Client]
+ImpersonateClientFactory = Callable[[Callable[[str], tuple[int, str]]], object]
 
 
 def _row(identifier: str = "", url: str | None = None) -> RowContext:
@@ -143,10 +145,10 @@ def test_scrape_error_raises(
 # --------------------------------------------------------------------------- #
 # Investing.com
 # --------------------------------------------------------------------------- #
-def test_investing_com_happy_path(make_client: ClientFactory) -> None:
+def test_investing_com_happy_path(make_impersonate_client: ImpersonateClientFactory) -> None:
     body = load_fixture("investing_com_quote.html")
     provider = InvestingComProvider(
-        InvestingComProviderConfig(), make_client(lambda r: httpx.Response(200, text=body)), 0
+        InvestingComProviderConfig(), make_impersonate_client(lambda url: (200, body)), 0
     )
     quote = provider.fetch(_row(url="https://www.investing.com/equities/acme-corp"))
 
@@ -177,14 +179,14 @@ def test_investing_com_happy_path(make_client: ClientFactory) -> None:
     ],
 )
 def test_investing_com_error_raises(
-    make_client: ClientFactory,
+    make_impersonate_client: ImpersonateClientFactory,
     config: InvestingComProviderConfig,
     body: str,
     url: str | None,
     match: str,
 ) -> None:
     provider = InvestingComProvider(
-        config, make_client(lambda r: httpx.Response(200, text=body)), 0
+        config, make_impersonate_client(lambda url: (200, body)), 0
     )
     with pytest.raises(ProviderError, match=match):
         provider.fetch(_row(url=url))
@@ -212,7 +214,41 @@ def test_retry_then_success(
     assert attempts["n"] == 2
 
 
-def test_build_registry_has_all_providers(make_client: ClientFactory) -> None:
+def test_investing_com_retry_then_success(
+    make_impersonate_client: ImpersonateClientFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(providers_pkg.time, "sleep", lambda _s: None)
+    body = load_fixture("investing_com_quote.html")
+    attempts = {"n": 0}
+
+    def handler(url: str) -> tuple[int, str]:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            return (503, "temporarily down")
+        return (200, body)
+
+    provider = InvestingComProvider(
+        InvestingComProviderConfig(), make_impersonate_client(handler), max_retries=1
+    )
+    quote = provider.fetch(_row(url="https://www.investing.com/equities/acme-corp"))
+    assert quote.currency == "USD"
+    assert attempts["n"] == 2
+
+
+def test_investing_com_non_retryable_status_raises(
+    make_impersonate_client: ImpersonateClientFactory,
+) -> None:
+    # A 403 (Cloudflare block) is not retryable and must fail the row fast.
+    provider = InvestingComProvider(
+        InvestingComProviderConfig(), make_impersonate_client(lambda url: (403, "blocked")), 2
+    )
+    with pytest.raises(ProviderError, match="HTTP 403"):
+        provider.fetch(_row(url="https://www.investing.com/equities/acme-corp"))
+
+
+def test_build_registry_has_all_providers(
+    make_client: ClientFactory, make_impersonate_client: ImpersonateClientFactory
+) -> None:
     config = Config.model_validate(
         {
             "spreadsheet": "id",
@@ -225,5 +261,9 @@ def test_build_registry_has_all_providers(make_client: ClientFactory) -> None:
             },
         }
     )
-    registry = build_registry(config, make_client(lambda r: httpx.Response(200, text="{}")))
+    registry = build_registry(
+        config,
+        make_client(lambda r: httpx.Response(200, text="{}")),
+        make_impersonate_client(lambda url: (200, "{}")),
+    )
     assert set(registry) == {"pse", "scrape", "investing-com"}

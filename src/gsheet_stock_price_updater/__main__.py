@@ -7,10 +7,12 @@ daemon and no network service. Flags: --config, --dry-run, --verbose.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import sys
 
 import httpx
+from curl_cffi import requests as curl_requests
 
 from .config import ConfigError, load_config
 from .providers import build_registry
@@ -65,8 +67,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     sheet_service = SheetService(worksheet, config)
-    with httpx.Client(timeout=_CLIENT_TIMEOUT_SECONDS) as client:
-        registry = build_registry(config, client)
+    with contextlib.ExitStack() as stack:
+        client = stack.enter_context(httpx.Client(timeout=_CLIENT_TIMEOUT_SECONDS))
+        # Browser-impersonating session for investing.com (Cloudflare-gated).
+        impersonate_session = stack.enter_context(
+            curl_requests.Session(impersonate=config.providers.investing_com.impersonate)
+        )
+        registry = build_registry(config, client, impersonate_session)
         try:
             execute_run(config, sheet_service, registry, dry_run=args.dry_run)
         except SheetError as exc:
