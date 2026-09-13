@@ -1,0 +1,15 @@
+# Local pre-commit hooks. Install with: pre-commit install
+# The point is to catch an accidental secret before it is committed; ruff runs
+# too, check-only, so a lint violation fails the commit with the exact same
+# pass/fail behavior as CI (which runs `ruff check .`). Run `ruff check --fix`
+# by hand when you want fixes applied.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.4
+    hooks:
+      - id: ruff-check

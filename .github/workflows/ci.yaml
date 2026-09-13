@@ -1,0 +1,70 @@
+# CI-only: lint, type-check, test, and audit on pull requests and pushes to main.
+# It holds no secrets and never builds or pushes an image or deploys anything -
+# the image is built locally and imported into Synology by hand (see README).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: CI only needs to read the repo.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-type-test:
+    name: Lint, type-check, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies (frozen)
+        run: uv sync --all-groups --frozen
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Type-check
+        run: uv run mypy
+
+      - name: Tests
+        run: uv run pytest
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Audit locked dependencies
+        # Audit the resolved runtime lock, not just installed packages.
+        run: |
+          uv export --frozen --no-dev --no-emit-project > audit-requirements.txt
+          uvx pip-audit --strict --requirement audit-requirements.txt
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          # Auto-provisioned, permissions-scoped per-run token (not a user
+          # secret). gitleaks-action requires it to scan pull_request events.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
